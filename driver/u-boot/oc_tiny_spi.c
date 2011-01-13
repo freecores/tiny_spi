@@ -1,17 +1,21 @@
 /*
  * Opencore tiny_spi driver
  *
+ * http://opencores.org/project,tiny_spi
+ *
  * based on bfin_spi.c
  * Copyright (c) 2005-2008 Analog Devices Inc.
  * Copyright (C) 2010 Thomas Chou <thomas@wytron.com.tw>
  *
  * Licensed under the GPL-2 or later.
  */
+
 #include <common.h>
 #include <asm/io.h>
 #include <malloc.h>
 #include <spi.h>
 #include <asm/gpio.h>
+
 #define TINY_SPI_RXDATA 0
 #define TINY_SPI_TXDATA 4
 #define TINY_SPI_STATUS 8
@@ -26,24 +30,23 @@ struct tiny_spi_host {
 	uint freq;
 	uint baudwidth;
 };
-static struct tiny_spi_host tiny_spi_host_list[] = CONFIG_SYS_TINY_SPI_LIST;
+static const struct tiny_spi_host tiny_spi_host_list[] =
+	CONFIG_SYS_TINY_SPI_LIST;
 
 struct tiny_spi_slave {
 	struct spi_slave slave;
-	struct tiny_spi_host *host;
+	const struct tiny_spi_host *host;
 	uint mode;
 	uint baud;
 	uint flg;
 };
 #define to_tiny_spi_slave(s) container_of(s, struct tiny_spi_slave, slave)
 
-__attribute__((weak))
 int spi_cs_is_valid(unsigned int bus, unsigned int cs)
 {
 	return bus < ARRAY_SIZE(tiny_spi_host_list) && gpio_is_valid(cs);
 }
 
-__attribute__((weak))
 void spi_cs_activate(struct spi_slave *slave)
 {
 	struct tiny_spi_slave *tiny_spi = to_tiny_spi_slave(slave);
@@ -52,7 +55,6 @@ void spi_cs_activate(struct spi_slave *slave)
 	debug("%s: SPI_CS_GPIO:%x\n", __func__, gpio_get_value(cs));
 }
 
-__attribute__((weak))
 void spi_cs_deactivate(struct spi_slave *slave)
 {
 	struct tiny_spi_slave *tiny_spi = to_tiny_spi_slave(slave);
@@ -64,10 +66,9 @@ void spi_cs_deactivate(struct spi_slave *slave)
 void spi_set_speed(struct spi_slave *slave, uint hz)
 {
 	struct tiny_spi_slave *tiny_spi = to_tiny_spi_slave(slave);
-	struct tiny_spi_host *host = tiny_spi->host;
-	tiny_spi->baud = DIV_ROUND_UP(host->freq, hz * 2) - 1;
-	if (tiny_spi->baud > (1 << host->baudwidth) - 1)
-		tiny_spi->baud =(1 << host->baudwidth) - 1;
+	const struct tiny_spi_host *host = tiny_spi->host;
+	tiny_spi->baud = min(DIV_ROUND_UP(host->freq, hz * 2),
+			     (1 << host->baudwidth)) - 1;
 	debug("%s: speed %u actual %u\n", __func__, hz,
 	      host->freq / ((tiny_spi->baud + 1) * 2));
 }
@@ -111,7 +112,7 @@ void spi_free_slave(struct spi_slave *slave)
 int spi_claim_bus(struct spi_slave *slave)
 {
 	struct tiny_spi_slave *tiny_spi = to_tiny_spi_slave(slave);
-	struct tiny_spi_host *host = tiny_spi->host;
+	const struct tiny_spi_host *host = tiny_spi->host;
 	debug("%s: bus:%i cs:%i\n", __func__, slave->bus, slave->cs);
 	gpio_direction_output(slave->cs, !tiny_spi->flg);
 	writel(tiny_spi->mode, host->base + TINY_SPI_CONTROL);
@@ -131,7 +132,7 @@ void spi_release_bus(struct spi_slave *slave)
 int spi_xfer(struct spi_slave *slave, unsigned int bitlen, const void *dout,
 	     void *din, unsigned long flags)
 {
-	struct tiny_spi_host *host = to_tiny_spi_slave(slave)->host;
+	const struct tiny_spi_host *host = to_tiny_spi_slave(slave)->host;
 	const u8 *txp = dout;
 	u8 *rxp = din;
 	uint bytes = bitlen / 8;
@@ -159,17 +160,20 @@ int spi_xfer(struct spi_slave *slave, unsigned int bitlen, const void *dout,
 			for (i = 2; i < bytes; i++) {
 				u8 rx, tx = *txp++;
 				while (!(readb(host->base + TINY_SPI_STATUS) &
-					 TINY_SPI_STATUS_TXR));
+					 TINY_SPI_STATUS_TXR))
+					;
 				rx = readb(host->base + TINY_SPI_TXDATA);
 				writeb(tx, host->base + TINY_SPI_TXDATA);
 				*rxp++ = rx;
 			}
 			while (!(readb(host->base + TINY_SPI_STATUS) &
-				 TINY_SPI_STATUS_TXR));
+				 TINY_SPI_STATUS_TXR))
+				;
 			*rxp++ = readb(host->base + TINY_SPI_TXDATA);
 		}
 		while (!(readb(host->base + TINY_SPI_STATUS) &
-			 TINY_SPI_STATUS_TXE));
+			 TINY_SPI_STATUS_TXE))
+			;
 		*rxp++ = readb(host->base + TINY_SPI_RXDATA);
 	} else if (rxp) {
 		writeb(CONFIG_TINY_SPI_IDLE_VAL, host->base + TINY_SPI_TXDATA);
@@ -179,18 +183,21 @@ int spi_xfer(struct spi_slave *slave, unsigned int bitlen, const void *dout,
 			for (i = 2; i < bytes; i++) {
 				u8 rx;
 				while (!(readb(host->base + TINY_SPI_STATUS) &
-					 TINY_SPI_STATUS_TXR));
+					 TINY_SPI_STATUS_TXR))
+					;
 				rx = readb(host->base + TINY_SPI_TXDATA);
 				writeb(CONFIG_TINY_SPI_IDLE_VAL,
 				       host->base + TINY_SPI_TXDATA);
 				*rxp++ = rx;
 			}
 			while (!(readb(host->base + TINY_SPI_STATUS) &
-				 TINY_SPI_STATUS_TXR));
+				 TINY_SPI_STATUS_TXR))
+				;
 			*rxp++ = readb(host->base + TINY_SPI_TXDATA);
 		}
 		while (!(readb(host->base + TINY_SPI_STATUS) &
-			 TINY_SPI_STATUS_TXE));
+			 TINY_SPI_STATUS_TXE))
+			;
 		*rxp++ = readb(host->base + TINY_SPI_RXDATA);
 	} else if (txp) {
 		writeb(*txp++, host->base + TINY_SPI_TXDATA);
@@ -199,12 +206,14 @@ int spi_xfer(struct spi_slave *slave, unsigned int bitlen, const void *dout,
 			for (i = 2; i < bytes; i++) {
 				u8 tx = *txp++;
 				while (!(readb(host->base + TINY_SPI_STATUS) &
-					 TINY_SPI_STATUS_TXR));
+					 TINY_SPI_STATUS_TXR))
+					;
 				writeb(tx, host->base + TINY_SPI_TXDATA);
 			}
 		}
 		while (!(readb(host->base + TINY_SPI_STATUS) &
-			 TINY_SPI_STATUS_TXE));
+			 TINY_SPI_STATUS_TXE))
+			;
 	} else {
 		writeb(CONFIG_TINY_SPI_IDLE_VAL, host->base + TINY_SPI_TXDATA);
 		if (bytes > 1) {
@@ -212,13 +221,15 @@ int spi_xfer(struct spi_slave *slave, unsigned int bitlen, const void *dout,
 			       host->base + TINY_SPI_TXDATA);
 			for (i = 2; i < bytes; i++) {
 				while (!(readb(host->base + TINY_SPI_STATUS) &
-					 TINY_SPI_STATUS_TXR));
+					 TINY_SPI_STATUS_TXR))
+					;
 				writeb(CONFIG_TINY_SPI_IDLE_VAL,
 				       host->base + TINY_SPI_TXDATA);
 			}
 		}
 		while (!(readb(host->base + TINY_SPI_STATUS) &
-			 TINY_SPI_STATUS_TXE));
+			 TINY_SPI_STATUS_TXE))
+			;
 	}
 
  done:
